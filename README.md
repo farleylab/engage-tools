@@ -16,9 +16,9 @@ This toolkit is meant to explore genomic data and find putative enhancers of int
 
 ## Main Features of EnGAGE
 
-* [*WIP*] `engage.search` : Performs searches for clusters of transcription factor binding motifs of interest within a given genome
-* [*TBA*] `engage.filter` : Filters on clusters of transcription factor binding motifs of interest to meet structural constraints 
-* [*TBA*] `engage.plot` : Visualizes clusters of transcription factor binding motifs of interests across a given genome and/or specified region
+* [*WIP*] `engage.search` : Search for clusters of transcription factor binding motifs in a genome
+* [*TBA*] `engage.filter` : Filters clusters of transcription factor binding motifs for structural constraints
+* [*TBA*] `engage.plot` : Visualizes locations of grammars across the genome
 
 ### Documentation
 
