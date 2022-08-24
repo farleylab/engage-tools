@@ -63,7 +63,7 @@ class TestHelperMethods(unittest.TestCase):
         self.assertEqual(type(search._read_genome(filename)), dict)
 
     def test__motif_to_regex(self):
-        # Validate IUPAC replacement and concatenantion between multiple motifs
+        # Validate IUPAC replacement and concatenation between multiple motifs
         motifs = ['CANS','CACAGCTG']
         self.assertEqual(search._motif_to_regex(motifs), 
             'CA(A|C|T|G)(G|C)|CACAGCTG')

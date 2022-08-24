@@ -1,11 +1,18 @@
 from Bio import SeqIO
 
-import pandas as pd
-import re
+import pandas as pd 
+import re 
 
 from itertools import groupby
 from operator import itemgetter
 
+from multiprocessing import Pool
+from functools import partial
+from tqdm import tqdm
+import natsort
+
+##################################################
+# Class Definitions 
 ##################################################
 
 class TF: 
@@ -15,20 +22,21 @@ class TF:
     def __init__(self,name,motifs):
         if type(name) != str: 
             raise TypeError("The transcription factor name should be type(str)")
-        elif len(name) is 0:
+        elif len(name) == 0:
             raise ValueError("Transcription factor names cannot be empty")
 
-        if type(motifs) is list and all(type(e) == str for e in motifs) is False: 
+        if type(motifs) == list and all(type(e) == str for e in motifs) == False: 
             raise TypeError(
                 "All transcription factor motifs in a list should be type(str)")
-        elif type(motifs) is list and len(motifs) is 0:
+        elif type(motifs) == list and len(motifs) == 0:
             raise ValueError("Transcription factor motifs cannot be empty")
         elif type(motifs) != list and type(motifs) != str: 
-            raise TypeError("A single transcription factor motif should be type(str)")
+            raise TypeError(
+                "A single transcription factor motif should be type(str)")
 
         self.name = name
         self.motifs = motifs
-        if type(motifs) is str:
+        if type(motifs) == str:
             self.motifs = [motifs]
 
 class Cluster: 
@@ -40,7 +48,7 @@ class Cluster:
         self.name = name
         self.window = window
 
-        if members is None:
+        if members == None:
             self.members = {}
 
     def add_member(self,tf,number):
@@ -60,7 +68,7 @@ class Cluster:
         output += "====================================\n"
         output += f"Window Size = {self.window}\n"
         output += "Transcription Factors =\n"
-        if len(self.members) is 0:
+        if len(self.members) == 0:
             output += "* None Defined\n"
         else:
             for tf in self.members: 
@@ -69,6 +77,8 @@ class Cluster:
 
         return(output)
 
+##################################################
+# Helper Methods
 ##################################################
 
 def _read_genome(filename):
@@ -94,45 +104,56 @@ def _motif_to_regex(motifs):
     updated_motifs_string = ""
     for nucleotide in motifs_string:
         nt = nucleotide
-        if nucleotide in iupac_conversions: 
-            nt = iupac_conversions[nucleotide]
-        elif nucleotide not in iupac_conversions and nucleotide.isalpha() is True:
-            raise ValueError("Invalid nucleotide detected (Must follow IUPAC naming)")
+        if nt in iupac_conversions: 
+            nt = iupac_conversions[nt]
+        elif nt not in iupac_conversions and nt.isalpha() is True:
+            raise ValueError("Invalid nucleotide detected")
 
         updated_motifs_string += nt 
 
     return(updated_motifs_string)
 
-def _find_motif_locations(genome_dictionary,cluster_parameters): 
+def _search_chromosome(search_pattern_parameters,chromosome_sequence): 
+    """Search through a chromosome for clusters"""
+    # Define the chromosome sequence and regions that can contain a site
+    search_member_locations = {e:{} for e in range(len(chromosome_sequence))}
+
+    # Search through each chromosome and define the location of sites
+    for member in search_pattern_parameters: 
+        regions_found = search_pattern_parameters[member].finditer(chromosome_sequence)
+        for site in regions_found: 
+            if member not in search_member_locations[site.start()]: 
+                search_member_locations[site.start()][member] = tuple()
+            search_member_locations[site.start()][member] = \
+                (site.start(),site.end(),chromosome_sequence[site.start():site.end()])
+    
+    return(search_member_locations)
+
+def _find_motif_locations(genome_dictionary,cluster_parameters,num_processes=4): 
     """Find the locations of all desired motifs in the genome"""
     # For each transcription factor motif present in the cluster, generate
     # a separate regular expression to search for it within the string later
     cluster_members = cluster_parameters.members
-    search_pattern_parameters = {} # tracks regex patterns for each member
-    search_number_parameters = {} # tracks the number of times each member should appear
-    for member in cluster_members: 
+    search_pattern_parameters = {} # regex patterns for each member
+    search_number_parameters = {} # number of appearances for each member
+    for member in tqdm(cluster_members,
+                       desc="Processing Search Parameters"): 
         search_pattern_parameters[member.name] = re.compile(
             _motif_to_regex(member.motifs),re.IGNORECASE)
         search_number_parameters[member.name] = cluster_members[member]
 
+    # Go through each of the chromosomes and search for the clusters 
+    # with multiprocessing on default 4 processes
     search_member_locations = {}
-    for chromosome in list(genome_dictionary.keys()): 
-        # Define a dictionary to hold each location within the chromosome 
-        # and whether or not a motif BEGINS at that location
-        search_member_locations[chromosome] = {}
-        chromosome_sequence = str(genome_dictionary[chromosome].seq)
-        search_member_locations[chromosome] = {
-            e:{} for e in range(len(chromosome_sequence))}
+    chromosome_list = natsort.natsorted(genome_dictionary.keys())
+    chromosome_sequences = [str(genome_dictionary[c].seq) for c in chromosome_list]
 
-        # Go through each chromosome present within the genome of interest,
-        # then search for the locations of the transcription factors of interest
-        for member in search_pattern_parameters: 
-            regions_found = search_pattern_parameters[member].finditer(chromosome_sequence)
-            for site in regions_found: 
-                if member not in search_member_locations[chromosome][site.start()]: 
-                    search_member_locations[chromosome][site.start()][member] = tuple()
-                search_member_locations[chromosome][site.start()][member] = \
-                    (site.start(),site.end(),chromosome_sequence[site.start():site.end()])
+    with Pool(processes=num_processes) as pool: 
+        search_results = pool.imap(
+            partial(_search_chromosome,search_pattern_parameters),
+            tqdm(chromosome_sequences,desc="Searching Chromosomes for Clusters"))
+        for chromosome,result in zip(chromosome_list,search_results): 
+            search_member_locations[chromosome] = result
 
     return(search_member_locations,search_number_parameters)
 
@@ -150,8 +171,12 @@ def _consolidate_overlapping_regions(cluster_indices):
     return(output) 
 
 ##################################################
+# Main Method
+##################################################
 
-def find_motif_cluster(filename,cluster_parameters,minimum_flanking=5,exact_number=False): 
+def find_motif_cluster( filename,cluster_parameters,
+                        minimum_flanking=5,exact_number=False,
+                        num_processes=4 ): 
     """
     Given a genome file, find all clusters of desired motifs in the genome.
 
@@ -169,38 +194,39 @@ def find_motif_cluster(filename,cluster_parameters,minimum_flanking=5,exact_numb
     """
     genome_dictionary = _read_genome(filename)
     if type(cluster_parameters) != Cluster: 
-        raise TypeError("The cluster parameter provided should be type(Cluster)")
+        raise TypeError("Cluster parameter provided should be type(Cluster)")
 
     # Find the location of all desired motifs in the genome 
     # and the number of times they should appear within a given window
     search_member_locations,search_number_parameters = \
-        _find_motif_locations(genome_dictionary,cluster_parameters)
-    
+        _find_motif_locations(genome_dictionary,cluster_parameters,num_processes)
+
     window_size = cluster_parameters.window
 
     # Go through each chromosome and evaluate a sliding window to see if we 
-    # meet the minimum requirements for the number of times a motif should appear
+    # meet the minimum requirements for the number of motif appearances
 
-    # !TODO: Multiprocessing
     data = []
-    for chromosome in search_member_locations: 
+    for chromosome in tqdm(search_member_locations,
+                           desc="Consolidating Overlapping Regions",
+                           total=len(search_member_locations)):
         clusters_found = set()
         chromosome_search_results = search_member_locations[chromosome]
-        for chridx_start in range(len(chromosome_search_results)-window_size+1): 
+        for chromosome_index_start in range(len(chromosome_search_results)-window_size+1): 
             motif_tallies = { member:0 for member in search_number_parameters }
-            chridx_end = chridx_start + window_size 
+            chromosome_index_end = chromosome_index_start + window_size 
 
             # Evaluate the window for the motifs that are present and tally them
-            for chridx in range(chridx_start,chridx_end): 
-                for member in chromosome_search_results[chridx]: 
-                    # Ensure that the beginning of the motif has some breathing room
-                    # (set by minimum_flanking) at the start of the window, and that 
-                    # the end of the motif isn't outside the window
-                    if chromosome_search_results[chridx][member][0] < \
-                        chridx_start + minimum_flanking:
+            for chromosome_index in range(chromosome_index_start,chromosome_index_end): 
+                for member in chromosome_search_results[chromosome_index]: 
+                    # Ensure that the beginning of the motif has some 
+                    # breathing room (set by minimum_flanking) at the start of 
+                    # the window, and that the end of the motif isn't outside
+                    if chromosome_search_results[chromosome_index][member][0] < \
+                        chromosome_index_start + minimum_flanking:
                         continue
-                    if chromosome_search_results[chridx][member][1] > \
-                        chridx_end - minimum_flanking:
+                    if chromosome_search_results[chromosome_index][member][1] > \
+                        chromosome_index_end - minimum_flanking:
                         continue 
                     motif_tallies[member] += 1
 
@@ -208,14 +234,16 @@ def find_motif_cluster(filename,cluster_parameters,minimum_flanking=5,exact_numb
             # either exact matches or "minimum match" requirements
             if exact_number is True:
                 if motif_tallies == search_number_parameters: 
-                    clusters_found = clusters_found | set(range(chridx_start,chridx_end))
+                    clusters_found = clusters_found | \
+                        set(range(chromosome_index_start,chromosome_index_end))
             else: 
                 total_number_parameters_passed = 0
                 for member in search_number_parameters: 
                     if motif_tallies[member] >= search_number_parameters[member]: 
                         total_number_parameters_passed += 1
                 if total_number_parameters_passed == len(search_number_parameters): 
-                    clusters_found = clusters_found | set(range(chridx_start,chridx_end))
+                    clusters_found = clusters_found | \
+                        set(range(chromosome_index_start,chromosome_index_end))
 
         for cluster_region in _consolidate_overlapping_regions(clusters_found): 
             if len(cluster_region) < window_size:

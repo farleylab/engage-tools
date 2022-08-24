@@ -1,13 +1,15 @@
 [tool.poetry]
-name = "engage-tools"
+name = "engage"
 version = "0.1.0"
 description = ""
 authors = ["mragsac <mragsac@eng.ucsd.edu>"]
 
 [tool.poetry.dependencies]
 python = "^3.8"
-biopython = "^1.79"
+biopython = "^1.4.0"
 pandas = "^1.4.3"
+tqdm = "^4.64.0"
+natsort = "^8.1.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
