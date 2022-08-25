@@ -148,6 +148,10 @@ def _find_motif_locations(genome_dictionary,cluster_parameters,num_processes=4):
     chromosome_list = natsort.natsorted(genome_dictionary.keys())
     chromosome_sequences = [str(genome_dictionary[c].seq) for c in chromosome_list]
 
+    # !TODO : Fix multiprocessing.pool + tqdm tracking 
+    # The current method of checking if each chromosome is done processing 
+    # is incorrect -- tqdm currently tallies /when/ chromosome is initiated
+
     with Pool(processes=num_processes) as pool: 
         search_results = pool.imap(
             partial(_search_chromosome,search_pattern_parameters),
@@ -205,6 +209,8 @@ def find_motif_cluster( filename,cluster_parameters,
 
     # Go through each chromosome and evaluate a sliding window to see if we 
     # meet the minimum requirements for the number of motif appearances
+
+    # !TODO : Incorporate multiprocessing when collapsing overlapping regions
 
     data = []
     for chromosome in tqdm(search_member_locations,
